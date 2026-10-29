@@ -1,0 +1,39 @@
+name: Build Starling Hill SNES ROM
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "snes-rom/**"
+      - ".github/workflows/build-snes.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out game
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gcc-12 cmake git python3 doxygen texi2html texlive-latex-base texlive-latex-recommended texlive-latex-extra
+
+      - name: Build PVSnesLib
+        run: |
+          git clone --recurse-submodules --depth=1 https://github.com/alekmaul/pvsneslib.git "$RUNNER_TEMP/pvsneslib"
+          cd "$RUNNER_TEMP/pvsneslib"
+          make -j2
+          echo "PVSNESLIB_HOME=$RUNNER_TEMP/pvsneslib" >> "$GITHUB_ENV"
+
+      - name: Compile game ROM
+        run: |
+          make -C snes-rom
+
+      - name: Upload SNES ROM
+        uses: actions/upload-artifact@v4
+        with:
+          name: starling-hill-snes-rom
+          path: snes-rom/starling_hill.sfc
+          if-no-files-found: error
+          retention-days: 30
