@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Strange Things at Starling Hill</title>
+<style>
+  :root { color-scheme: dark; --ink:#17152c; --cream:#fff1b8; --pink:#f48caa; --blue:#6ed7e8; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#111022; color:var(--cream); font-family:ui-monospace, SFMono-Regular, Menlo, monospace; display:flex; min-height:100vh; align-items:center; justify-content:center; padding:16px; }
+  .shell { width:min(100%, 980px); }
+  header { display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin:0 0 10px; flex-wrap:wrap; }
+  h1 { font-size:clamp(17px,3vw,25px); margin:0; letter-spacing:1px; text-transform:uppercase; }
+  .sub { color:#b7b4df; font-size:12px; margin-top:5px; }
+  .hud { display:flex; gap:8px; flex-wrap:wrap; font-size:12px; }
+  .chip { border:2px solid #5d5a8c; background:#24213e; padding:7px 10px; }
+  .frame { border:4px solid #5d5a8c; background:#080916; padding:6px; box-shadow:8px 8px 0 #080916; }
+  canvas { display:block; width:100%; height:auto; image-rendering:pixelated; background:#1b2348; touch-action:none; }
+  .below { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; color:#b7b4df; font-size:12px; margin-top:12px; }
+  .controls { display:flex; justify-content:space-between; gap:12px; margin-top:12px; align-items:center; }
+  .pad, .actions { display:flex; gap:8px; }
+  button { font:inherit; color:var(--cream); background:#24213e; border:2px solid #7773aa; padding:12px 14px; min-width:48px; box-shadow:0 3px 0 #0a0916; touch-action:manipulation; }
+  button:active, button.down { transform:translateY(2px); box-shadow:none; background:#403b67; }
+  .note { margin-top:12px; font-size:12px; line-height:1.5; color:#a9a6d0; }
+  @media (min-width:720px) { .controls { display:none; } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div><h1>Strange Things at Starling Hill</h1><div class="sub">A tiny 16-bit exploration platformer prototype</div></div>
+    <div class="hud"><div class="chip" id="area">AREA: MAPLE STREET</div><div class="chip" id="items">ODDITIES: 0 / 5</div></div>
+  </header>
+  <div class="frame"><canvas id="game" width="384" height="216" aria-label="Pixel art platform game"></canvas></div>
+  <div class="below"><span id="message">The streetlights are humming again.</span><span>Move: ← → / A D · Jump: Space / Z · Talk: ↑ / E</span></div>
+  <div class="controls">
+    <div class="pad"><button data-key="left">◀</button><button data-key="right">▶</button></div>
+    <div class="actions"><button data-key="jump">JUMP</button><button data-key="talk">TALK</button></div>
+  </div>
+  <div class="note">Find the five oddities, talk to the mailbox, and discover what is making the hill glow. Keyboard works best on desktop; touch controls are included for phones.</div>
+</div>
+<script>
+(() => {
+const c = document.getElementById('game'), ctx = c.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+const W=384,H=216, tile=16;
+const keys={left:false,right:false,jump:false,talk:false};
+let pressed={jump:false,talk:false};
+let area='street', camera=0, tick=0, oddities=0, message='The streetlights are humming again.', msgTimer=0;
+const player={x:34,y:150,w:10,h:14,vx:0,vy:0,onGround:false,face:1,hasBoots:false,hasGlow:false};
+const world={
+ street:{width:900, ground:176, bg:'#26365f', floor:'#6c547d'},
+ cave:{width:760, ground:184, bg:'#101a38', floor:'#3b5870'}
+};
+let collectibles=[
+ {area:'street',x:124,y:151,taken:false,kind:'star'},
+ {area:'street',x:312,y:141,taken:false,kind:'soda'},
+ {area:'street',x:526,y:142,taken:false,kind:'star'},
+ {area:'cave',x:168,y:154,taken:false,kind:'crystal'},
+ {area:'cave',x:592,y:135,taken:false,kind:'crystal'}
+];
+let platforms={
+ street:[{x:190,y:143,w:52,h:8},{x:390,y:124,w:48,h:8},{x:590,y:146,w:64,h:8},{x:720,y:130,w:42,h:8}],
+ cave:[{x:92,y:153,w:50,h:8},{x:224,y:130,w:60,h:8},{x:374,y:145,w:50,h:8},{x:506,y:116,w:64,h:8},{x:650,y:150,w:48,h:8}]
+};
+const rect=(x,y,w,h,col)=>{ctx.fillStyle=col;ctx.fillRect(Math.round(x),Math.round(y),w,h)};
+function text(str,x,y,col='#fff1b8'){ctx.fillStyle=col;ctx.font='8px monospace';ctx.fillText(str,x,y)}
+function say(s){message=s;msgTimer=210;document.getElementById('message').textContent=s}
+function enter(a,x){area=a;player.x=x;player.y=100;player.vx=player.vy=0;camera=0;say(a==='cave'?'The hill is bigger on the inside.':'Home looks almost normal.');}
+function drawSky(){
+ const a=area==='street';
+ rect(0,0,W,H,world[area].bg);
+ if(a){
+  for(let i=0;i<8;i++){let x=(i*70-camera*.18)%440; if(x<-60)x+=440; rect(x,98,52,78,'#34466e');rect(x+8,88,36,14,'#34466e');}
+  for(let i=0;i<18;i++){let x=(i*31-camera*.34)%430;if(x<0)x+=430;rect(x,28+(i%4)*11,2,2,i%3?'#f8d77b':'#a7e8e2');}
+ } else {
+  for(let i=0;i<9;i++){let x=(i*48-camera*.12)%420;if(x<0)x+=420;rect(x,18,5,62,'#1d3150');rect(x-5,70,15,4,'#1d3150');}
+  for(let i=0;i<24;i++){let x=(i*19-camera*.2)%400;if(x<0)x+=400;rect(x,25+(i%7)*15,2,2,i%2?'#78d8d8':'#f48caa');}
+ }
+}
+function drawHouse(x){
+ x-=camera;
+ rect(x,126,64,50,'#e9a16b');rect(x-5,118,74,12,'#cc6b7c');rect(x+8,137,13,15,'#29365e');rect(x+42,136,12,40,'#5a426a');
+ rect(x+11,139,7,9,'#f8d77b');rect(x+45,140,6,7,'#f8d77b');
+ rect(x+27,111,10,7,'#f48caa');
+}
+function drawWorld(){
+ drawSky();
+ const ground=world[area].ground;
+ rect(0,ground,W,H-ground,world[area].floor);
+ for(let x=-(camera%16);x<W;x+=16)rect(x,ground,1,H-ground,'#302947');
+ if(area==='street'){
+  for(let x=40;x<world.street.width;x+=220)drawHouse(x);
+  for(let x=155;x<world.street.width;x+=190){let sx=x-camera;rect(sx,93,3,83,'#252746');rect(sx-5,88,13,5,'#f8d77b'); if(Math.sin(tick*.08+x)>.25)rect(sx-10,83,23,13,'#615a92');}
+  let mx=world.street.width-110-camera;rect(mx,153,12,16,'#5a8fbd');rect(mx-2,149,16,5,'#f48caa');rect(mx+5,169,2,7,'#a9a6d0');
+  text('MAIL?',mx-4,143,'#f8d77b');
+  let ex=world.street.width-34-camera;rect(ex,140,26,36,'#101a38');rect(ex+4,146,18,30,'#253d5a');text('HILL',ex-2,133);
+ } else {
+  for(let x=20;x<W;x+=47){rect(x,ground+8,15,2,'#54788a');rect(x+8,ground+18,9,2,'#54788a');}
+  for(let x=70;x<world.cave.width;x+=180){let sx=x-camera;rect(sx,ground-22,6,22,'#527b88');rect(sx-5,ground-26,16,5,'#78d8d8');}
+  let ex=world.cave.width-30-camera;rect(ex,136,24,48,'#f48caa');rect(ex+4,141,16,43,'#101a38');text('OUT',ex,130);
+ }
+ for(const p of platforms[area]){let x=p.x-camera;if(x>-70&&x<W+20){rect(x,p.y,p.w,8,area==='street'?'#f4b16b':'#78d8d8');rect(x,p.y+6,p.w,2,area==='street'?'#a85f72':'#426c83');}}
+}
+function drawCollectibles(){
+ for(const o of collectibles){if(o.area!==area||o.taken)continue;let x=o.x-camera;if(x<-10||x>W+10)continue;
+  if(o.kind==='star'){rect(x+3,o.y,4,10,'#f8d77b');rect(x,o.y+3,10,4,'#f8d77b');rect(x+2,o.y+2,6,6,'#fff1b8');}
+  else if(o.kind==='soda'){rect(x+2,o.y,7,11,'#f48caa');rect(x+3,o.y-2,5,3,'#fff1b8');rect(x+3,o.y+4,5,3,'#78d8d8');}
+  else {rect(x+3,o.y,5,12,'#78d8d8');rect(x,o.y+3,11,6,'#a7e8e2');rect(x+3,o.y+4,4,4,'#fff1b8');}
+ }
+}
+function drawPlayer(){
+ const x=player.x-camera,y=player.y;
+ rect(x-2,world[area].ground-2,14,2,'#15162d');
+ rect(x+2,y,7,4,'#f48caa');rect(x+1,y+3,9,4,'#f0c59b');rect(x+1,y+7,9,5,'#78d8d8');
+ rect(x+2,y+8,3,2,'#fff1b8');rect(x+7,y+8,2,2,'#fff1b8');
+ rect(x+1,y+12,3,3,'#30304f');rect(x+7,y+12,3,3,'#30304f');
+ rect(x+(player.face>0?7:2),y+4,2,2,'#17152c');
+ if(player.hasGlow){rect(x-2,y-3,14,1,'#f8d77b');}
+}
+function interact(){
+ const px=player.x+player.w/2;
+ if(area==='street'&&Math.abs(px-(world.street.width-104))<35){
+  say('MAILBOX: “RETURN TO SENDER: THE MOON.” That seems like a bad sign.');
+ } else if(area==='street'&&player.x>world.street.width-65){
+  enter('cave',28);
+ } else if(area==='cave'&&player.x>world.cave.width-60){
+  enter('street',world.street.width-75);
+ } else if(area==='cave'&&player.x>430&&player.x<500){
+  if(!player.hasGlow){player.hasGlow=true;say('You found the glow-sock! Hidden things shimmer nearby.');}
+  else say('The walls are whispering your name. Rude.');
+ } else say(area==='street'?'A lawn gnome says, “The moon has been acting suspicious.”':'A damp sign reads: PLEASE DO NOT FEED THE WALLS.');
+}
+function update(){
+ tick++;
+ const speed=1.65;
+ player.vx=(keys.right?speed:0)-(keys.left?speed:0);
+ if(player.vx)player.face=Math.sign(player.vx);
+ if(pressed.jump&&player.onGround){player.vy=-5.1;player.onGround=false;}
+ player.vy+=.23;if(player.vy>5)player.vy=5;
+ let oldY=player.y;player.x+=player.vx;player.y+=player.vy;
+ player.x=Math.max(0,Math.min(world[area].width-player.w,player.x));
+ player.onGround=false;
+ const ground=world[area].ground;
+ if(player.y+player.h>=ground){player.y=ground-player.h;player.vy=0;player.onGround=true;}
+ for(const p of platforms[area]){
+  if(player.x+player.w>p.x&&player.x<p.x+p.w&&oldY+player.h<=p.y+2&&player.y+player.h>=p.y&&player.vy>=0){player.y=p.y-player.h;player.vy=0;player.onGround=true;}
+ }
+ for(const o of collectibles){if(o.area===area||o.taken)continue;}
+ for(const o of collectibles){
+  if(o.area===area&&!o.taken&&Math.abs((player.x+5)-(o.x+5))<12&&Math.abs((player.y+7)-(o.y+5))<15){
+   o.taken=true;oddities++;say(o.kind==='soda'?'A fizzy drink from a future that never happened.':'Oddity found. It hums in your pocket.');document.getElementById('items').textContent=`ODDITIES: ${oddities} / 5`;
+   if(oddities===5)say('All five oddities found. The hill is definitely not a hill.');
+  }
+ }
+ if(pressed.talk)interact();
+ const target=Math.max(0,Math.min(world[area].width-W,player.x-W*.42));
+ camera+=(target-camera)*.14;
+ document.getElementById('area').textContent='AREA: '+(area==='street'?'MAPLE STREET':'STARLING HILL');
+ if(msgTimer>0)msgTimer--;
+ pressed.jump=false;pressed.talk=false;
+}
+function render(){
+ update();drawWorld();drawCollectibles();drawPlayer();
+ ctx.fillStyle='rgba(8,9,22,.12)';for(let y=0;y<H;y+=3)ctx.fillRect(0,y,W,1);
+ requestAnimationFrame(render);
+}
+function keyDown(e){
+ const k=e.key.toLowerCase();
+ if(['arrowleft','arrowright','arrowup',' ','z','a','d','e'].includes(k))e.preventDefault();
+ if(k==='arrowleft'||k==='a')keys.left=true;
+ if(k==='arrowright'||k==='d')keys.right=true;
+ if(k===' '||k==='z'){if(!keys.jump)pressed.jump=true;keys.jump=true;}
+ if(k==='arrowup'||k==='e'){if(!keys.talk)pressed.talk=true;keys.talk=true;}
+}
+function keyUp(e){
+ const k=e.key.toLowerCase();
+ if(k==='arrowleft'||k==='a')keys.left=false;
+ if(k==='arrowright'||k==='d')keys.right=false;
+ if(k===' '||k==='z')keys.jump=false;
+ if(k==='arrowup'||k==='e')keys.talk=false;
+}
+addEventListener('keydown',keyDown);addEventListener('keyup',keyUp);
+document.querySelectorAll('button[data-key]').forEach(b=>{
+ const k=b.dataset.key;
+ const down=e=>{e.preventDefault();b.classList.add('down');if(k==='jump'){if(!keys.jump)pressed.jump=true;keys.jump=true;}else if(k==='talk'){if(!keys.talk)pressed.talk=true;keys.talk=true;}else keys[k]=true;};
+ const up=e=>{e.preventDefault();b.classList.remove('down');if(k==='jump')keys.jump=false;else if(k==='talk')keys.talk=false;else keys[k]=false;};
+ b.addEventListener('pointerdown',down);b.addEventListener('pointerup',up);b.addEventListener('pointercancel',up);b.addEventListener('pointerleave',up);
+});
+render();
+})();
+</script>
+</body>
+</html>
